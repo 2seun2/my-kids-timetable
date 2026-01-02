@@ -3,37 +3,36 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import os
+from io import BytesIO
 
+# ---------------------------------------------------------
 # 페이지 설정
+# ---------------------------------------------------------
 st.set_page_config(page_title="우리 아이 하루 계획표", layout="wide")
 
 # ---------------------------------------------------------
-# [오류 해결 핵심] 폰트 강제 설치 함수
+# 폰트 설정 (서버에 폰트가 없을 경우 자동 설치)
 # ---------------------------------------------------------
 @st.cache_resource
-def install_font():
-    # 나눔고딕 폰트 파일명
+def install_font_and_configure():
+    # 1. 폰트 파일 다운로드 (나눔고딕)
     font_file = "NanumGothic.ttf"
-    
-    # 1. 폰트 파일이 없으면 구글에서 받아온다
     if not os.path.exists(font_file):
         import urllib.request
         url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
         urllib.request.urlretrieve(url, font_file)
         
-    # 2. 폰트를 맷플롯립에 등록한다
+    # 2. 폰트 등록
     fm.fontManager.addfont(font_file)
     plt.rc('font', family='NanumGothic')
+    plt.rcParams['axes.unicode_minus'] = False # 마이너스 기호 깨짐 방지
 
-# 폰트 설정 실행
-install_font()
-plt.rcParams['axes.unicode_minus'] = False 
+# 폰트 실행
+install_font_and_configure()
 
 # ---------------------------------------------------------
-# 유틸리티 함수
+# 그래프 및 데이터 처리 로직
 # ---------------------------------------------------------
-from io import BytesIO
-
 def time_to_float(time_str):
     try:
         h, m = map(int, str(time_str).split(':'))
@@ -47,34 +46,40 @@ def create_gantt_chart(child_name, df):
     df['End_Float'] = df['종료시간'].apply(time_to_float)
     df['Duration'] = df['End_Float'] - df['Start_Float']
     
-    # 그래프 순서를 시간 순서대로 정렬
+    # 그래프 정렬 (시간순)
     df = df.sort_values(by='Start_Float', ascending=True)
     df = df.reset_index(drop=True)
-    df_reversed = df.iloc[::-1]
+    df_reversed = df.iloc[::-1] # 그래프는 밑에서부터 그려지므로 뒤집기
 
-    # 그림 생성
+    # 캔버스 생성
     fig, ax = plt.subplots(figsize=(10, 6))
     
     # 막대 그래프 그리기
     bars = ax.barh(df_reversed.index, df_reversed['Duration'], left=df_reversed['Start_Float'], 
                    color=df_reversed['색상'], edgecolor='white', height=0.6)
 
-    # 텍스트 추가
+    # 막대 안에 글자 넣기
     for i, bar in enumerate(bars):
         row = df_reversed.iloc[i]
+        
         # 활동명
         ax.text(bar.get_x() + bar.get_width()/2, bar.get_y() + bar.get_height()/2 + 0.1, 
                 str(row['활동명']), 
                 ha='center', va='center', color='white', weight='bold', fontsize=12)
-        # 시간 범위
+        
+        # 시간 텍스트
         time_text = f"{row['시작시간']} ~ {row['종료시간']}"
         ax.text(bar.get_x() + bar.get_width()/2, bar.get_y() + bar.get_height()/2 - 0.15, 
                 time_text, 
                 ha='center', va='center', color='white', fontsize=9)
 
-    ax.set_xlim(df['Start_Float'].min() - 0.5, df['End_Float'].max() + 0.5)
+    # 축 설정
+    start_min = df['Start_Float'].min()
+    end_max = df['End_Float'].max()
+    ax.set_xlim(start_min - 0.5, end_max + 0.5)
     ax.set_xlabel("시간 (Time)", fontsize=10)
     
+    # 불필요한 테두리 제거
     ax.set_yticks([])
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
@@ -85,20 +90,21 @@ def create_gantt_chart(child_name, df):
     return fig
 
 # ---------------------------------------------------------
-# 메인 화면 구성
+# 메인 UI 구성
 # ---------------------------------------------------------
 st.title("🕒 우리 아이 하루 생활계획표 (막대그래프형)")
-st.markdown("시작 시간과 끝나는 시간을 입력하면 **시간의 길이를 시각화**해서 보여줍니다.")
+st.caption("새로고침을 해도 오류가 난다면, 우측 상단 메뉴 -> Clear Cache를 눌러보세요.")
 
 tab1, tab2 = st.tabs(["첫째 아이", "둘째 아이"])
 
+# 색상 팔레트 정의
 color_options = {
-    '공부/학교': '#5D9CEC',
-    '운동/활동': '#48CFAD',
-    '식사/휴식': '#FFCE54',
-    '취미/놀이': '#AC92EC',
-    '수면/준비': '#AAB2BD',
-    '학원/레슨': '#FB6E52',
+    '공부/학교 (파랑)': '#5D9CEC',
+    '운동/활동 (민트)': '#48CFAD',
+    '식사/휴식 (노랑)': '#FFCE54',
+    '취미/놀이 (보라)': '#AC92EC',
+    '수면/준비 (회색)': '#AAB2BD',
+    '학원/레슨 (주황)': '#FB6E52',
 }
 
 def render_tab(key_suffix, default_name, default_data):
@@ -109,6 +115,7 @@ def render_tab(key_suffix, default_name, default_data):
         
         df = pd.DataFrame(default_data)
         
+        # 데이터 에디터 (여기가 오류의 원인이었음 -> 버전업으로 해결)
         edited_df = st.data_editor(
             df,
             column_config={
@@ -122,51 +129,10 @@ def render_tab(key_suffix, default_name, default_data):
             key=f"editor_{key_suffix}"
         )
         
+        # 색상 가이드
         st.markdown("###### 🎨 색상 가이드")
         for label, color in color_options.items():
             st.markdown(f"<span style='color:{color}'>■</span> {label}", unsafe_allow_html=True)
 
     with col2:
-        if st.button(f"📸 {name} 계획표 만들기", key=f"btn_{key_suffix}"):
-            plot_df = edited_df.copy()
-            try:
-                if not plot_df.empty:
-                    plot_df['시작시간'] = plot_df['시작시간'].astype(str)
-                    plot_df['종료시간'] = plot_df['종료시간'].astype(str)
-                    
-                    fig = create_gantt_chart(name, plot_df)
-                    st.pyplot(fig)
-                    
-                    buf = BytesIO()
-                    fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
-                    st.download_button(
-                        label="💾 이미지로 저장하기",
-                        data=buf.getvalue(),
-                        file_name=f"{name}_timeline.png",
-                        mime="image/png"
-                    )
-            except Exception as e:
-                st.error(f"오류가 발생했습니다: {e}")
-
-# 데이터 초기값
-data_1 = {
-    "활동명": ["기상 및 아침", "학교 수업", "점심 시간", "수학 학원", "자유 시간", "저녁 식사"],
-    "시작시간": ["07:30", "09:00", "12:00", "14:00", "16:00", "18:00"],
-    "종료시간": ["08:30", "12:00", "13:00", "16:00", "18:00", "19:00"],
-    "색상": [color_options['수면/준비'], color_options['공부/학교'], color_options['식사/휴식'], 
-           color_options['학원/레슨'], color_options['취미/놀이'], color_options['식사/휴식']]
-}
-
-data_2 = {
-    "활동명": ["일어나기", "유치원 등원", "태권도", "놀이터", "간식", "꿈나라"],
-    "시작시간": ["08:00", "09:30", "14:00", "15:30", "16:30", "21:00"],
-    "종료시간": ["09:00", "13:30", "15:00", "16:30", "17:00", "07:00"],
-    "색상": [color_options['수면/준비'], color_options['공부/학교'], color_options['운동/활동'], 
-           color_options['취미/놀이'], color_options['식사/휴식'], color_options['수면/준비']]
-}
-
-with tab1:
-    render_tab("child1", "첫째(하민)", data_1)
-
-with tab2:
-    render_tab("child2", "둘째(하율)", data_2)
+        st.write("###
