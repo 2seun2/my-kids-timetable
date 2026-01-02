@@ -25,7 +25,7 @@ def install_font_and_configure():
 install_font_and_configure()
 
 # ---------------------------------------------------------
-# 2. 데이터 처리 함수 (안전장치 강화)
+# 2. 데이터 처리 함수
 # ---------------------------------------------------------
 def process_weekly_data_from_df(df):
     expanded_data = []
@@ -33,44 +33,46 @@ def process_weekly_data_from_df(df):
     
     # 데이터프레임 순회
     for index, row in df.iterrows():
-        # 데이터가 None이거나 비어있으면 무시 (오류 방지)
-        if pd.isna(row['요일']) or pd.isna(row['시작시간']) or pd.isna(row['종료시간']):
-            continue
-        if str(row['요일']).strip() == "" or str(row['시작시간']).strip() == "":
+        # 데이터 유효성 검사 (문자열로 변환하여 안전하게 처리)
+        if pd.isna(row.get('요일')) or pd.isna(row.get('시작시간')) or pd.isna(row.get('종료시간')):
             continue
             
-        days = str(row['요일']).split(',')
+        days_str = str(row.get('요일', '')).strip()
+        start_str = str(row.get('시작시간', '')).strip()
+        end_str = str(row.get('종료시간', '')).strip()
+        activity_str = str(row.get('활동명', '')).strip()
+
+        if not days_str or not start_str or not end_str or not activity_str:
+            continue
+        
+        if ':' not in start_str or ':' not in end_str:
+             continue
+
+        days = days_str.split(',')
         
         for day in days:
             day = day.strip()
             if day in day_order:
                 try:
-                    # 시간 포맷 처리 (혹시 모를 공백 제거)
-                    s_str = str(row['시작시간']).strip()
-                    e_str = str(row['종료시간']).strip()
-                    
-                    if ':' not in s_str or ':' not in e_str:
-                        continue
-                        
-                    s_h, s_m = map(int, s_str.split(':'))
-                    e_h, e_m = map(int, e_str.split(':'))
+                    s_h, s_m = map(int, start_str.split(':'))
+                    e_h, e_m = map(int, end_str.split(':'))
                     
                     start_float = s_h + (s_m / 60)
                     end_float = e_h + (e_m / 60)
                     
-                    # 색상값이 없으면 기본 회색 적용
-                    color_val = str(row['색상']).strip()
+                    # 색상 처리
+                    color_val = str(row.get('색상', '')).strip()
                     if not color_val.startswith('#'):
                         color_val = '#CCCCCC'
 
                     expanded_data.append({
                         '요일': day,
                         '요일인덱스': day_order[day],
-                        '활동명': str(row['활동명']),
+                        '활동명': activity_str,
                         '시작': start_float,
                         '소요시간': end_float - start_float,
                         '색상': color_val,
-                        '시간텍스트': f"{s_str}~{e_str}"
+                        '시간텍스트': f"{start_str}~{end_str}"
                     })
                 except:
                     continue 
@@ -112,7 +114,6 @@ def draw_weekly_timetable(child_name, df):
 # ---------------------------------------------------------
 # 3. 초기 데이터 (세션 상태)
 # ---------------------------------------------------------
-# 처음 실행될 때만 데이터를 생성합니다.
 if 'data_1' not in st.session_state:
     st.session_state.data_1 = pd.DataFrame([
         {'활동명': '학교', '요일': '월,화,수,목,금', '시작시간': '09:00', '종료시간': '13:00', '색상': '#5D9CEC'},
@@ -128,8 +129,8 @@ if 'data_2' not in st.session_state:
 # ---------------------------------------------------------
 # 4. 화면 UI
 # ---------------------------------------------------------
-st.title("📅 우리 아이 주간 학업 시간표 (입력 수정 가능)")
-st.caption("표의 맨 아래 빈 칸을 클릭하면 새로운 일정을 추가할 수 있습니다.")
+st.title("📅 우리 아이 주간 학업 시간표 (입력 후 버튼 클릭)")
+st.markdown("👉 **왼쪽 표**에서 내용을 수정하고 추가한 뒤, 아래 **[🔄 일정 적용 및 이미지 업데이트] 버튼**을 눌러주세요.")
 
 tab1, tab2 = st.tabs(["첫째 아이", "둘째 아이"])
 
@@ -138,38 +139,68 @@ def render_tab(key_suffix, child_name, data_key):
     
     with col1:
         st.subheader(f"📝 {child_name} 일정 편집")
-        st.markdown("""
-        - **요일**: `월,수,금` (쉼표로 구분)
-        - **시간**: `14:00` (반드시 : 포함)
-        - **색상**: `#` 색상코드
-        """)
+        st.info("💡 표의 맨 아래 빈 줄을 클릭하면 새 항목을 추가할 수 있습니다.")
         
-        # [핵심 수정] 모든 컬럼을 '텍스트'로 강제 지정하여 입력 오류 방지
-        edited_df = st.data_editor(
-            st.session_state[data_key],
+        # 데이터 에디터 (모든 컬럼 텍스트 모드)
+        # 주의: 여기서는 임시 변수(temp_df)에 담아둡니다.
+        temp_df = st.data_editor(
+            st.session_state[data_key], # 현재 저장된 데이터를 보여줌
             column_config={
                 "활동명": st.column_config.TextColumn("활동명", required=True),
                 "요일": st.column_config.TextColumn("요일 (예: 월,수)", required=True),
                 "시작시간": st.column_config.TextColumn("시작 (예: 14:00)", required=True),
                 "종료시간": st.column_config.TextColumn("종료 (예: 15:00)", required=True),
-                "색상": st.column_config.TextColumn("색상코드", default="#CCCCCC"),
+                "색상": st.column_config.TextColumn("색상코드 (예: #CCCCCC)"),
             },
-            num_rows="dynamic", # 행 추가 허용
+            num_rows="dynamic",
             use_container_width=True,
             key=f"editor_{key_suffix}"
         )
         
-        # 수정된 데이터 저장
-        st.session_state[data_key] = edited_df
+        st.markdown("""
+        <small>색상 예시: 파랑(#5D9CEC), 민트(#48CFAD), 노랑(#FFCE54), 보라(#AC92EC), 주황(#FB6E52)</small>
+        """, unsafe_allow_html=True)
+
+        # [핵심] 업데이트 버튼
+        # 이 버튼을 눌러야 temp_df가 실제 session_state에 저장되고 그래프가 그려집니다.
+        if st.button("🔄 일정 적용 및 이미지 업데이트", key=f"btn_{key_suffix}", use_container_width=True, type="primary"):
+            st.session_state[data_key] = temp_df
+            st.rerun() # 화면 새로고침
 
     with col2:
         st.subheader("📊 시간표 미리보기")
         
-        if not edited_df.empty:
+        # [핵심] 그래프는 항상 '저장된(버튼으로 확정된) 데이터'를 사용합니다.
+        confirmed_df = st.session_state[data_key]
+        
+        if not confirmed_df.empty:
             # 안전하게 문자열로 변환 후 처리
-            safe_df = edited_df.astype(str)
+            safe_df = confirmed_df.astype(str)
             plot_df = process_weekly_data_from_df(safe_df)
             
             if not plot_df.empty:
                 try:
-                    fig = draw_weekly_timetable(child
+                    fig = draw_weekly_timetable(child_name, plot_df)
+                    st.pyplot(fig)
+                    
+                    buf = BytesIO()
+                    fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
+                    st.download_button(
+                        label="💾 이미지 파일로 저장하기",
+                        data=buf.getvalue(),
+                        file_name=f"{child_name}_timetable.png",
+                        mime="image/png",
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    st.error(f"그래프 생성 중 오류가 발생했습니다. 입력 데이터를 확인해주세요.")
+            else:
+                st.warning("표시할 데이터가 없습니다. 왼쪽 표에 일정을 입력하고 버튼을 눌러주세요.")
+        else:
+             st.warning("데이터가 비어있습니다. 일정을 추가해주세요.")
+
+with tab1:
+    render_tab("child1", "첫째(하민)", 'data_1')
+
+with tab2:
+    render_tab("child2", "둘째(하율)", 'data_2')
