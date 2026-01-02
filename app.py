@@ -1,144 +1,174 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from datetime import datetime
 import koreanize_matplotlib  # 한글 폰트 자동 설정
 from io import BytesIO
 
 # 페이지 설정
-st.set_page_config(page_title="아이 학업 시간표 만들기", layout="wide")
-st.title("🎨 우리 아이 학업 시간표 생성기")
-st.markdown("요일과 과목을 입력하면 **예쁜 이미지**로 만들어 드려요!")
+st.set_page_config(page_title="우리 아이 하루 계획표", layout="wide")
+st.title("🕒 우리 아이 하루 생활계획표 (막대그래프형)")
+st.markdown("시작 시간과 끝나는 시간을 입력하면 **시간의 길이를 시각화**해서 보여줍니다.")
 
 # ---------------------------------------------------------
-# 함수: 시간표 이미지 생성
+# 함수: 시간 문자열(HH:MM)을 실수(Float)로 변환
+# 예: "09:30" -> 9.5
 # ---------------------------------------------------------
-def create_schedule_image(child_name, df, color_theme):
+def time_to_float(time_str):
+    h, m = map(int, time_str.split(':'))
+    return h + (m / 60)
+
+# ---------------------------------------------------------
+# 함수: 막대 그래프(타임라인) 생성
+# ---------------------------------------------------------
+def create_gantt_chart(child_name, df):
+    # 데이터 전처리
+    df['Start_Float'] = df['시작시간'].apply(time_to_float)
+    df['End_Float'] = df['종료시간'].apply(time_to_float)
+    df['Duration'] = df['End_Float'] - df['Start_Float']
+    
+    # 그래프 순서를 시간 순서대로 정렬하고, 위에서부터 이른 시간이 오도록 인덱스 역순
+    df = df.sort_values(by='Start_Float', ascending=True)
+    df = df.reset_index(drop=True)
+    # y축 위치를 위해 역순으로 뒤집기 (matplotlib은 아래서부터 그리기 때문)
+    df_reversed = df.iloc[::-1]
+
     # 그림 생성
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    # 축 숨기기
-    ax.axis('tight')
-    ax.axis('off')
-    
-    # 테이블 그리기
-    table = ax.table(cellText=df.values,
-                     colLabels=df.columns,
-                     rowLabels=df.index,
-                     cellLoc='center',
-                     loc='center')
+    # 막대 그래프 그리기 (가로형)
+    bars = ax.barh(df_reversed.index, df_reversed['Duration'], left=df_reversed['Start_Float'], 
+                   color=df_reversed['색상'], edgecolor='white', height=0.6)
 
-    # 스타일 설정
-    table.auto_set_font_size(False)
-    table.set_fontsize(13)
-    table.scale(1.2, 2.5)
-
-    # 테마 색상 설정
-    colors = {
-        'Blue (하늘색)': '#87CEFA',
-        'Yellow (노란색)': '#FFD700',
-        'Pink (분홍색)': '#FFB6C1',
-        'Green (연두색)': '#98FB98'
-    }
-    header_color = colors.get(color_theme, '#87CEFA')
-    row_colors = ['#f9f9f9', '#ffffff']
-
-    # 셀 꾸미기
-    for (row, col), cell in table.get_celld().items():
-        cell.set_edgecolor('white')
-        cell.set_linewidth(2)
+    # 텍스트 추가 (막대 안에 활동명과 시간 표시)
+    for i, bar in enumerate(bars):
+        row = df_reversed.iloc[i]
         
-        if row == 0 or col == -1:
-            cell.set_text_props(weight='bold', color='black', fontsize=14)
-            cell.set_facecolor(header_color)
-        else:
-            cell.set_facecolor(row_colors[row % 2])
+        # 활동명 (굵게)
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_y() + bar.get_height()/2 + 0.1, 
+                row['활동명'], 
+                ha='center', va='center', color='white', weight='bold', fontsize=12)
+        
+        # 시간 범위 (작게)
+        time_text = f"{row['시작시간']} ~ {row['종료시간']}"
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_y() + bar.get_height()/2 - 0.15, 
+                time_text, 
+                ha='center', va='center', color='white', fontsize=9)
 
-    plt.title(f"★ {child_name}의 주간 시간표 ★", fontsize=20, weight='bold', pad=20)
+    # X축 설정 (시간 표시)
+    ax.set_xlim(df['Start_Float'].min() - 0.5, df['End_Float'].max() + 0.5)
+    ax.set_xlabel("시간 (Time)", fontsize=10)
+    
+    # Y축, 테두리 숨기기 (깔끔하게)
+    ax.set_yticks([]) # Y축 눈금 제거
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_visible(False)
+    
+    # 그리드 추가 (점선)
+    ax.grid(axis='x', linestyle='--', alpha=0.5)
+
+    plt.title(f"★ {child_name}의 하루 흐름 ★", fontsize=20, weight='bold', pad=20)
     return fig
 
 # ---------------------------------------------------------
 # 메인 화면 구성
 # ---------------------------------------------------------
 
-# 탭으로 아이 구분
 tab1, tab2 = st.tabs(["첫째 아이", "둘째 아이"])
 
-# --- [첫째 아이 탭] ---
+# 공통 색상 옵션
+color_options = {
+    '공부/학교': '#5D9CEC',  # 파랑
+    '운동/활동': '#48CFAD',  # 민트
+    '식사/휴식': '#FFCE54',  # 노랑
+    '취미/놀이': '#AC92EC',  # 보라
+    '수면/준비': '#AAB2BD',  # 회색
+    '학원/레슨': '#FB6E52',  # 주황
+}
+
+def render_tab(key_suffix, default_name, default_data):
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        name = st.text_input("아이 이름", value=default_name, key=f"name_{key_suffix}")
+        st.caption("💡 오른쪽 표에서 시간과 활동, 색상을 선택하세요.")
+        
+        # 데이터 에디터 설정
+        df = pd.DataFrame(default_data)
+        
+        edited_df = st.data_editor(
+            df,
+            column_config={
+                "활동명": st.column_config.TextColumn("활동 내용", help="예: 수학학원, 점심식사", required=True),
+                "시작시간": st.column_config.TimeColumn("시작", format="HH:mm", step=60*30, required=True), # 30분 단위
+                "종료시간": st.column_config.TimeColumn("끝", format="HH:mm", step=60*30, required=True),
+                "색상": st.column_config.SelectColumn(
+                    "카테고리 색상",
+                    help="활동 성격에 맞는 색을 고르세요",
+                    options=list(color_options.values()), # 색상 코드값
+                    required=True
+                )
+            },
+            num_rows="dynamic",
+            use_container_width=True,
+            key=f"editor_{key_suffix}"
+        )
+
+        # 색상 가이드 표시
+        st.markdown("###### 🎨 색상 가이드")
+        for label, color in color_options.items():
+            st.markdown(f"<span style='color:{color}'>■</span> {label}", unsafe_allow_html=True)
+
+    with col2:
+        # 시간 문자열 포맷팅 처리 (datetime.time 객체 -> 문자열)
+        # data_editor가 리턴하는 시간 형식이 datetime.time일 경우를 대비
+        plot_df = edited_df.copy()
+        
+        try:
+            # 데이터가 비어있지 않은지 확인
+            if not plot_df.empty:
+                # 시작시간/종료시간이 문자열이 아니라 time 객체라면 문자열로 변환
+                plot_df['시작시간'] = plot_df['시작시간'].astype(str)
+                plot_df['종료시간'] = plot_df['종료시간'].astype(str)
+                
+                # 이미지 생성 및 표시
+                fig = create_gantt_chart(name, plot_df)
+                st.pyplot(fig)
+                
+                # 다운로드 버튼
+                buf = BytesIO()
+                fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
+                st.download_button(
+                    label=f"💾 {name} 계획표 저장하기",
+                    data=buf.getvalue(),
+                    file_name=f"{name}_timeline.png",
+                    mime="image/png"
+                )
+        except Exception as e:
+            st.error(f"시간 형식을 확인해주세요! (오류: {e})")
+
+# --- [첫째 아이 데이터] ---
+data_1 = {
+    "활동명": ["기상 및 아침", "학교 수업", "점심 시간", "수학 학원", "자유 시간(게임)", "저녁 식사", "숙제"],
+    "시작시간": ["07:30", "09:00", "12:00", "14:00", "16:00", "18:00", "19:00"],
+    "종료시간": ["08:30", "12:00", "13:00", "16:00", "18:00", "19:00", "21:00"],
+    "색상": [color_options['수면/준비'], color_options['공부/학교'], color_options['식사/휴식'], 
+           color_options['학원/레슨'], color_options['취미/놀이'], color_options['식사/휴식'], color_options['공부/학교']]
+}
+
+# --- [둘째 아이 데이터] ---
+data_2 = {
+    "활동명": ["일어나기", "유치원 등원", "태권도", "놀이터", "간식", "학습지", "꿈나라"],
+    "시작시간": ["08:00", "09:30", "14:00", "15:30", "16:30", "17:00", "21:00"],
+    "종료시간": ["09:00", "13:30", "15:00", "16:30", "17:00", "18:00", "07:00"], # 다음날 기상은 표시 안됨(당일 기준)
+    "색상": [color_options['수면/준비'], color_options['공부/학교'], color_options['운동/활동'], 
+           color_options['취미/놀이'], color_options['식사/휴식'], color_options['공부/학교'], color_options['수면/준비']]
+}
+
 with tab1:
-    st.header("첫째 시간표 설정")
-    col1, col2 = st.columns([1, 3])
-    
-    with col1:
-        name_1 = st.text_input("이름 입력", value="첫째(하민)", key="name1")
-        theme_1 = st.selectbox("테마 색상", ["Blue (하늘색)", "Yellow (노란색)", "Pink (분홍색)", "Green (연두색)"], key="theme1")
+    render_tab("child1", "첫째(하민)", data_1)
 
-    with col2:
-        st.info("👇 아래 표를 더블 클릭해서 내용을 수정하세요!")
-        # 초기 데이터
-        data_1 = {
-            '월': ['국어', '수학', '영어', '과학', '체육'],
-            '화': ['수학', '영어', '사회', '미술', '동아리'],
-            '수': ['영어', '국어', '음악', '수학', '자습'],
-            '목': ['과학', '체육', '역사', '도덕', '컴퓨터'],
-            '금': ['사회', '미술', '국어', '영어', '학급회의']
-        }
-        index_1 = ['1교시', '2교시', '3교시', '4교시', '5교시']
-        df_1 = pd.DataFrame(data_1, index=index_1)
-        
-        # 데이터 에디터 (사용자가 직접 수정 가능)
-        edited_df_1 = st.data_editor(df_1, use_container_width=True, num_rows="dynamic", key="editor1")
-
-    # 이미지 생성 버튼
-    if st.button("📸 첫째 시간표 이미지 만들기", key="btn1"):
-        fig = create_schedule_image(name_1, edited_df_1, theme_1)
-        st.pyplot(fig)
-        
-        # 다운로드 버튼
-        buf = BytesIO()
-        fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
-        st.download_button(
-            label="💾 이미지로 저장하기",
-            data=buf.getvalue(),
-            file_name=f"{name_1}_시간표.png",
-            mime="image/png"
-        )
-
-# --- [둘째 아이 탭] ---
 with tab2:
-    st.header("둘째 시간표 설정")
-    col1, col2 = st.columns([1, 3])
-    
-    with col1:
-        name_2 = st.text_input("이름 입력", value="둘째(하율)", key="name2")
-        theme_2 = st.selectbox("테마 색상", ["Yellow (노란색)", "Blue (하늘색)", "Pink (분홍색)", "Green (연두색)"], key="theme2")
-
-    with col2:
-        st.info("👇 아래 표를 더블 클릭해서 내용을 수정하세요!")
-        # 초기 데이터
-        data_2 = {
-            '월': ['피아노', '태권도', '간식', '숙제', '자유'],
-            '화': ['미술', '태권도', '독서', '숙제', 'TV'],
-            '수': ['피아노', '수영', '간식', '영어', '자유'],
-            '목': ['미술', '태권도', '독서', '수학', '블록'],
-            '금': ['키즈카페', '태권도', '영화', '파티', '취침']
-        }
-        index_2 = ['13:00', '14:00', '15:00', '16:00', '17:00']
-        df_2 = pd.DataFrame(data_2, index=index_2)
-        
-        # 데이터 에디터
-        edited_df_2 = st.data_editor(df_2, use_container_width=True, num_rows="dynamic", key="editor2")
-
-    # 이미지 생성 버튼
-    if st.button("📸 둘째 시간표 이미지 만들기", key="btn2"):
-        fig = create_schedule_image(name_2, edited_df_2, theme_2)
-        st.pyplot(fig)
-        
-        # 다운로드 버튼
-        buf = BytesIO()
-        fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
-        st.download_button(
-            label="💾 이미지로 저장하기",
-            data=buf.getvalue(),
-            file_name=f"{name_2}_시간표.png",
-            mime="image/png"
-        )
+    render_tab("child2", "둘째(하율)", data_2)
