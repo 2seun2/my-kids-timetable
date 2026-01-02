@@ -1,138 +1,135 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
-import os
-from io import BytesIO
+import plotly.graph_objects as go
 
-# ---------------------------------------------------------
-# 페이지 설정
-# ---------------------------------------------------------
-st.set_page_config(page_title="우리 아이 하루 계획표", layout="wide")
+# 1. 페이지 설정
+st.set_page_config(page_title="다단 사출 게이트 계산기", layout="wide")
 
-# ---------------------------------------------------------
-# 폰트 설정 (서버에 폰트가 없을 경우 자동 설치)
-# ---------------------------------------------------------
-@st.cache_resource
-def install_font_and_configure():
-    # 1. 폰트 파일 다운로드 (나눔고딕)
-    font_file = "NanumGothic.ttf"
-    if not os.path.exists(font_file):
-        import urllib.request
-        url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
-        urllib.request.urlretrieve(url, font_file)
+st.title("⚙️ 다단 사출 게이트 시간 계산기")
+st.markdown("---")
+
+# ==========================================
+# [SECTION 1] 상단: 설정 입력(좌) vs 그래프(우)
+# ==========================================
+st.subheader("📍 1. 사출 조건 및 속도 프로파일")
+
+top_left, top_right = st.columns([0.4, 0.6], gap="medium")
+
+with top_left:
+    st.markdown("#### 🛠️ 다단 속도 설정")
+    with st.container(border=True):
+        c1, c2 = st.columns(2)
+        start_pos = c1.number_input("계량 완료 위치 (mm)", value=150.0, step=1.0, format="%.1f")
+        vp_pos = c2.number_input("V-P 절환 위치 (mm)", value=20.0, step=1.0, format="%.1f")
         
-    # 2. 폰트 등록
-    fm.fontManager.addfont(font_file)
-    plt.rc('font', family='NanumGothic')
-    plt.rcParams['axes.unicode_minus'] = False # 마이너스 기호 깨짐 방지
+        st.markdown("---")
+        
+        # 1속
+        c_v1, c_s1 = st.columns(2)
+        v1 = c_v1.number_input("1속 속도 (mm/s)", value=60.0, min_value=0.1, step=1.0, format="%.1f")
+        s1 = c_s1.number_input("1속 종료 (mm)", value=100.0, step=1.0, format="%.1f")
+        
+        # 2속
+        c_v2, c_s2 = st.columns(2)
+        v2 = c_v2.number_input("2속 속도 (mm/s)", value=40.0, min_value=0.1, step=1.0, format="%.1f")
+        s2 = c_s2.number_input("2속 종료 (mm)", value=50.0, step=1.0, format="%.1f")
+        
+        # 3속 (오류 수정된 부분: 리스트 인덱싱 [0] 추가 및 레이아웃 정렬)
+        # 위쪽과 줄을 맞추기 위해 columns(2)로 나누고 왼쪽 칸만 사용합니다.
+        c_v3, _ = st.columns(2) 
+        v3 = c_v3.number_input("3속 속도 (mm/s)", value=20.0, min_value=0.1, step=1.0, format="%.1f")
 
-# 폰트 실행
-install_font_and_configure()
+# --- 계산 로직 ---
+if v1 > 0 and v2 > 0 and v3 > 0:
+    t1 = (start_pos - s1) / v1
+    t2 = (s1 - s2) / v2
+    t3 = (s2 - vp_pos) / v3
+    total_time = t1 + t2 + t3
+else:
+    t1, t2, t3, total_time = 0, 0, 0, 0
 
-# ---------------------------------------------------------
-# 그래프 및 데이터 처리 로직
-# ---------------------------------------------------------
-def time_to_float(time_str):
-    try:
-        h, m = map(int, str(time_str).split(':'))
-        return h + (m / 60)
-    except:
-        return 0.0
+def get_time(pos):
+    if v1 <= 0 or v2 <= 0 or v3 <= 0: return 0
+    if pos >= s1: return (start_pos - pos) / v1
+    elif pos >= s2: return t1 + (s1 - pos) / v2
+    else: return t1 + t2 + (s2 - pos) / v3
 
-def create_gantt_chart(child_name, df):
-    # 데이터 전처리
-    df['Start_Float'] = df['시작시간'].apply(time_to_float)
-    df['End_Float'] = df['종료시간'].apply(time_to_float)
-    df['Duration'] = df['End_Float'] - df['Start_Float']
+with top_right:
+    st.markdown("#### 📈 속도 프로파일 (Speed Graph)")
     
-    # 그래프 정렬 (시간순)
-    df = df.sort_values(by='Start_Float', ascending=True)
-    df = df.reset_index(drop=True)
-    df_reversed = df.iloc[::-1] # 그래프는 밑에서부터 그려지므로 뒤집기
-
-    # 캔버스 생성
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    # 막대 그래프 그리기
-    bars = ax.barh(df_reversed.index, df_reversed['Duration'], left=df_reversed['Start_Float'], 
-                   color=df_reversed['색상'], edgecolor='white', height=0.6)
-
-    # 막대 안에 글자 넣기
-    for i, bar in enumerate(bars):
-        row = df_reversed.iloc[i]
+    if total_time > 0:
+        fig = go.Figure()
         
-        # 활동명
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_y() + bar.get_height()/2 + 0.1, 
-                str(row['활동명']), 
-                ha='center', va='center', color='white', weight='bold', fontsize=12)
-        
-        # 시간 텍스트
-        time_text = f"{row['시작시간']} ~ {row['종료시간']}"
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_y() + bar.get_height()/2 - 0.15, 
-                time_text, 
-                ha='center', va='center', color='white', fontsize=9)
+        # 속도 프로파일
+        fig.add_trace(go.Scatter(
+            x=[start_pos, s1, s1, s2, s2, vp_pos],
+            y=[v1, v1, v2, v2, v3, v3],
+            mode='lines+markers', fill='tozeroy', name='Speed',
+            line=dict(color='#1f77b4', width=3), marker=dict(size=6)
+        ))
 
-    # 축 설정
-    start_min = df['Start_Float'].min()
-    end_max = df['End_Float'].max()
-    ax.set_xlim(start_min - 0.5, end_max + 0.5)
-    ax.set_xlabel("시간 (Time)", fontsize=10)
-    
-    # 불필요한 테두리 제거
-    ax.set_yticks([])
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['left'].set_visible(False)
-    ax.grid(axis='x', linestyle='--', alpha=0.5)
-
-    plt.title(f"★ {child_name}의 하루 흐름 ★", fontsize=20, weight='bold', pad=20)
-    return fig
-
-# ---------------------------------------------------------
-# 메인 UI 구성
-# ---------------------------------------------------------
-st.title("🕒 우리 아이 하루 생활계획표 (막대그래프형)")
-st.caption("새로고침을 해도 오류가 난다면, 우측 상단 메뉴 -> Clear Cache를 눌러보세요.")
-
-tab1, tab2 = st.tabs(["첫째 아이", "둘째 아이"])
-
-# 색상 팔레트 정의
-color_options = {
-    '공부/학교 (파랑)': '#5D9CEC',
-    '운동/활동 (민트)': '#48CFAD',
-    '식사/휴식 (노랑)': '#FFCE54',
-    '취미/놀이 (보라)': '#AC92EC',
-    '수면/준비 (회색)': '#AAB2BD',
-    '학원/레슨 (주황)': '#FB6E52',
-}
-
-def render_tab(key_suffix, default_name, default_data):
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        name = st.text_input("아이 이름", value=default_name, key=f"name_{key_suffix}")
-        
-        df = pd.DataFrame(default_data)
-        
-        # 데이터 에디터 (여기가 오류의 원인이었음 -> 버전업으로 해결)
-        edited_df = st.data_editor(
-            df,
-            column_config={
-                "활동명": st.column_config.TextColumn("활동 내용", required=True),
-                "시작시간": st.column_config.TimeColumn("시작", format="HH:mm", step=60*30, required=True),
-                "종료시간": st.column_config.TimeColumn("끝", format="HH:mm", step=60*30, required=True),
-                "색상": st.column_config.SelectColumn("색상", options=list(color_options.values()), required=True)
-            },
-            num_rows="dynamic",
-            use_container_width=True,
-            key=f"editor_{key_suffix}"
+        # V/P 절환위치
+        fig.add_vline(x=vp_pos, line_width=2, line_dash="dash", line_color="red")
+        fig.add_annotation(
+            x=vp_pos, y=v3 + (max(v1,v2,v3)*0.15),
+            text="<b>V/P 절환</b>", showarrow=True, arrowhead=2, arrowcolor="red",
+            font=dict(color="red", size=12)
         )
-        
-        # 색상 가이드
-        st.markdown("###### 🎨 색상 가이드")
-        for label, color in color_options.items():
-            st.markdown(f"<span style='color:{color}'>■</span> {label}", unsafe_allow_html=True)
 
-    with col2:
-        st.write("###
+        fig.update_layout(
+            title=dict(text="<b>SCREW POSITION vs SPEED</b>", font=dict(size=15)),
+            xaxis=dict(title="<b>SCREW POSITION (mm)</b>", autorange="reversed", gridcolor='lightgrey'),
+            yaxis=dict(title="<b>SPEED (mm/s)</b>", gridcolor='lightgrey'),
+            height=380, margin=dict(l=20, r=20, t=40, b=20),
+            plot_bgcolor='white', hovermode="x unified"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.success(f"⏱️ 계산된 총 사출 시간: **{total_time:.3f} sec**")
+    else:
+        st.error("⚠️ 속도는 0보다 커야 합니다.")
+
+st.divider()
+
+# ==========================================
+# [SECTION 2] 하단: 게이트 입력(좌) vs 결과(우)
+# ==========================================
+left_col, right_col = st.columns([0.6, 0.4], gap="large")
+
+with left_col:
+    st.subheader("📥 2. 게이트 위치 입력 (30 Gates)")
+    with st.container(border=True):
+        in_cols = st.columns(2)
+        gate_data = []
+        for i in range(1, 31):
+            target_col = in_cols[(i-1)//15]
+            with target_col:
+                r = st.columns([1, 2, 2])
+                r[0].markdown(f"<div style='padding-top:10px;'><b>G{i:02d}</b></div>", unsafe_allow_html=True)
+                op = r[1].text_input("Op", key=f"o{i}", placeholder="Open", label_visibility="collapsed")
+                cl = r[2].text_input("Cl", key=f"c{i}", placeholder="Close", label_visibility="collapsed")
+                
+                err = False
+                if op and cl:
+                    try:
+                        if float(op) <= float(cl): err = True
+                    except ValueError: pass
+                gate_data.append({"id": i, "op": op, "cl": cl, "err": err})
+
+with right_col:
+    st.subheader("📤 3. 환산 시간 결과")
+    results = []
+    for g in gate_data:
+        if g["op"] and g["cl"] and not g["err"]:
+            try:
+                ot = get_time(float(g["op"]))
+                ct = get_time(float(g["cl"]))
+                results.append({"Gate": f"G{g['id']:02d}", "Open(s)": round(ot, 3), "Close(s)": round(ct, 3)})
+            except ValueError: continue
+    
+    if results:
+        df = pd.DataFrame(results)
+        st.dataframe(df, use_container_width=True, hide_index=True, height=600)
+        csv = df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button("💾 엑셀 다운로드 (CSV)", csv, "injection_results.csv", "text/csv", type="primary")
+    else:
+        st.info("왼쪽에 게이트 위치를 입력하세요.")
