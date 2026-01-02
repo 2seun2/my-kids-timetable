@@ -34,8 +34,7 @@ with top_left:
         v2 = c_v2.number_input("2속 속도 (mm/s)", value=40.0, min_value=0.1, step=1.0, format="%.1f")
         s2 = c_s2.number_input("2속 종료 (mm)", value=50.0, step=1.0, format="%.1f")
         
-        # 3속 (오류 수정된 부분: 리스트 인덱싱 [0] 추가 및 레이아웃 정렬)
-        # 위쪽과 줄을 맞추기 위해 columns(2)로 나누고 왼쪽 칸만 사용합니다.
+        # 3속 (이 부분이 오류가 났던 곳입니다. 수정됨)
         c_v3, _ = st.columns(2) 
         v3 = c_v3.number_input("3속 속도 (mm/s)", value=20.0, min_value=0.1, step=1.0, format="%.1f")
 
