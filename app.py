@@ -8,35 +8,31 @@ import os
 st.set_page_config(page_title="우리 아이 하루 계획표", layout="wide")
 
 # ---------------------------------------------------------
-# [수정된 부분] 폰트 자동 설치 함수 (오류 해결 핵심)
+# [오류 해결 핵심] 폰트 강제 설치 함수
 # ---------------------------------------------------------
 @st.cache_resource
 def install_font():
-    # 리눅스(Streamlit Cloud) 환경 등에서 한글 폰트가 없을 경우
-    # 구글 폰트(나눔고딕)를 다운로드하여 적용합니다.
+    # 나눔고딕 폰트 파일명
     font_file = "NanumGothic.ttf"
     
+    # 1. 폰트 파일이 없으면 구글에서 받아온다
     if not os.path.exists(font_file):
-        # 폰트 파일이 없으면 다운로드 (curl 명령어 사용)
         import urllib.request
         url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
         urllib.request.urlretrieve(url, font_file)
         
-    # 폰트 매니저에 추가
+    # 2. 폰트를 맷플롯립에 등록한다
     fm.fontManager.addfont(font_file)
     plt.rc('font', family='NanumGothic')
 
-# 폰트 적용 실행
+# 폰트 설정 실행
 install_font()
-plt.rcParams['axes.unicode_minus'] = False # 마이너스 기호 깨짐 방지
+plt.rcParams['axes.unicode_minus'] = False 
 
 # ---------------------------------------------------------
-# 기존 로직 유지
+# 유틸리티 함수
 # ---------------------------------------------------------
 from io import BytesIO
-
-st.title("🕒 우리 아이 하루 생활계획표 (막대그래프형)")
-st.markdown("시작 시간과 끝나는 시간을 입력하면 **시간의 길이를 시각화**해서 보여줍니다.")
 
 def time_to_float(time_str):
     try:
@@ -66,12 +62,10 @@ def create_gantt_chart(child_name, df):
     # 텍스트 추가
     for i, bar in enumerate(bars):
         row = df_reversed.iloc[i]
-        
         # 활동명
         ax.text(bar.get_x() + bar.get_width()/2, bar.get_y() + bar.get_height()/2 + 0.1, 
                 str(row['활동명']), 
                 ha='center', va='center', color='white', weight='bold', fontsize=12)
-        
         # 시간 범위
         time_text = f"{row['시작시간']} ~ {row['종료시간']}"
         ax.text(bar.get_x() + bar.get_width()/2, bar.get_y() + bar.get_height()/2 - 0.15, 
@@ -93,6 +87,8 @@ def create_gantt_chart(child_name, df):
 # ---------------------------------------------------------
 # 메인 화면 구성
 # ---------------------------------------------------------
+st.title("🕒 우리 아이 하루 생활계획표 (막대그래프형)")
+st.markdown("시작 시간과 끝나는 시간을 입력하면 **시간의 길이를 시각화**해서 보여줍니다.")
 
 tab1, tab2 = st.tabs(["첫째 아이", "둘째 아이"])
 
@@ -125,48 +121,48 @@ def render_tab(key_suffix, default_name, default_data):
             use_container_width=True,
             key=f"editor_{key_suffix}"
         )
-
+        
         st.markdown("###### 🎨 색상 가이드")
         for label, color in color_options.items():
             st.markdown(f"<span style='color:{color}'>■</span> {label}", unsafe_allow_html=True)
 
     with col2:
-        plot_df = edited_df.copy()
-        
-        try:
-            if not plot_df.empty:
-                plot_df['시작시간'] = plot_df['시작시간'].astype(str)
-                plot_df['종료시간'] = plot_df['종료시간'].astype(str)
-                
-                fig = create_gantt_chart(name, plot_df)
-                st.pyplot(fig)
-                
-                buf = BytesIO()
-                fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
-                st.download_button(
-                    label=f"💾 {name} 계획표 저장하기",
-                    data=buf.getvalue(),
-                    file_name=f"{name}_timeline.png",
-                    mime="image/png"
-                )
-        except Exception as e:
-            st.error(f"시간 형식을 확인해주세요! (오류: {e})")
+        if st.button(f"📸 {name} 계획표 만들기", key=f"btn_{key_suffix}"):
+            plot_df = edited_df.copy()
+            try:
+                if not plot_df.empty:
+                    plot_df['시작시간'] = plot_df['시작시간'].astype(str)
+                    plot_df['종료시간'] = plot_df['종료시간'].astype(str)
+                    
+                    fig = create_gantt_chart(name, plot_df)
+                    st.pyplot(fig)
+                    
+                    buf = BytesIO()
+                    fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
+                    st.download_button(
+                        label="💾 이미지로 저장하기",
+                        data=buf.getvalue(),
+                        file_name=f"{name}_timeline.png",
+                        mime="image/png"
+                    )
+            except Exception as e:
+                st.error(f"오류가 발생했습니다: {e}")
 
-# 데이터
+# 데이터 초기값
 data_1 = {
-    "활동명": ["기상 및 아침", "학교 수업", "점심 시간", "수학 학원", "자유 시간", "저녁 식사", "숙제"],
-    "시작시간": ["07:30", "09:00", "12:00", "14:00", "16:00", "18:00", "19:00"],
-    "종료시간": ["08:30", "12:00", "13:00", "16:00", "18:00", "19:00", "21:00"],
+    "활동명": ["기상 및 아침", "학교 수업", "점심 시간", "수학 학원", "자유 시간", "저녁 식사"],
+    "시작시간": ["07:30", "09:00", "12:00", "14:00", "16:00", "18:00"],
+    "종료시간": ["08:30", "12:00", "13:00", "16:00", "18:00", "19:00"],
     "색상": [color_options['수면/준비'], color_options['공부/학교'], color_options['식사/휴식'], 
-           color_options['학원/레슨'], color_options['취미/놀이'], color_options['식사/휴식'], color_options['공부/학교']]
+           color_options['학원/레슨'], color_options['취미/놀이'], color_options['식사/휴식']]
 }
 
 data_2 = {
-    "활동명": ["일어나기", "유치원 등원", "태권도", "놀이터", "간식", "학습지", "꿈나라"],
-    "시작시간": ["08:00", "09:30", "14:00", "15:30", "16:30", "17:00", "21:00"],
-    "종료시간": ["09:00", "13:30", "15:00", "16:30", "17:00", "18:00", "07:00"],
+    "활동명": ["일어나기", "유치원 등원", "태권도", "놀이터", "간식", "꿈나라"],
+    "시작시간": ["08:00", "09:30", "14:00", "15:30", "16:30", "21:00"],
+    "종료시간": ["09:00", "13:30", "15:00", "16:30", "17:00", "07:00"],
     "색상": [color_options['수면/준비'], color_options['공부/학교'], color_options['운동/활동'], 
-           color_options['취미/놀이'], color_options['식사/휴식'], color_options['공부/학교'], color_options['수면/준비']]
+           color_options['취미/놀이'], color_options['식사/휴식'], color_options['수면/준비']]
 }
 
 with tab1:
