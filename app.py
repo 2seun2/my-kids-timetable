@@ -11,7 +11,7 @@ from io import BytesIO
 # ---------------------------------------------------------
 st.set_page_config(page_title="우리 아이 맞춤 시간표", layout="wide")
 
-# 예쁜 파스텔톤 색상 목록 (이름 -> 코드 변환용)
+# 예쁜 파스텔톤 색상 목록
 COLOR_MAP = {
     '파스텔 블루': '#5D9CEC',
     '민트': '#48CFAD',
@@ -44,19 +44,19 @@ def install_font_and_configure():
 install_font_and_configure()
 
 # ---------------------------------------------------------
-# 2. 데이터 처리 및 오류 검사 함수
+# 2. 유틸리티 함수 (CSV 변환, 데이터 처리)
 # ---------------------------------------------------------
+def convert_df_to_csv(df):
+    # 엑셀 한글 깨짐 방지 (utf-8-sig)
+    return df.to_csv(index=False).encode('utf-8-sig')
+
 def validate_and_process_data(df):
-    """ 
-    데이터를 검사하고, 오류가 있으면 에러 메시지를 반환합니다. 
-    정상 데이터는 그래프용으로 변환합니다.
-    """
+    """ 데이터 검사 및 그래프용 변환 """
     expanded_data = []
     error_messages = []
     day_order = {'월': 0, '화': 1, '수': 2, '목': 3, '금': 4}
     
     for index, row in df.iterrows():
-        # 필수 입력값 확인
         activity = str(row.get('활동명', '')).strip()
         days_str = str(row.get('요일', '')).strip()
         start_str = str(row.get('시작시간', '')).strip()
@@ -64,16 +64,13 @@ def validate_and_process_data(df):
         color_name = str(row.get('배경색', '그레이'))
         text_color_name = str(row.get('글자색', '흰색'))
 
-        # 빈 줄은 무시
         if not activity and not days_str and not start_str:
             continue
             
-        # 1. 누락된 항목 검사
         if not activity or not days_str or not start_str or not end_str:
-            error_messages.append(f"{index+1}번째 줄: 모든 칸(활동명, 요일, 시간)을 채워주세요.")
+            error_messages.append(f"{index+1}번째 줄: 내용을 모두 채워주세요.")
             continue
 
-        # 2. 시간 형식 검사 (HH:MM)
         try:
             if ':' not in start_str or ':' not in end_str:
                 raise ValueError("콜론(:) 없음")
@@ -81,24 +78,22 @@ def validate_and_process_data(df):
             s_h, s_m = map(int, start_str.split(':'))
             e_h, e_m = map(int, end_str.split(':'))
             
-            # 3. 시간 논리 검사 (0~23시, 종료가 시작보다 늦어야 함)
             if not (0 <= s_h <= 23) or not (0 <= s_m <= 59) or \
                not (0 <= e_h <= 23) or not (0 <= e_m <= 59):
-                error_messages.append(f"{index+1}번째 줄: 시간은 00:00 ~ 23:59 사이여야 합니다.")
+                error_messages.append(f"{index+1}번째 줄: 시간은 00:00~23:59 사이여야 합니다.")
                 continue
                 
             start_float = s_h + (s_m / 60)
             end_float = e_h + (e_m / 60)
             
             if end_float <= start_float:
-                error_messages.append(f"{index+1}번째 줄: 끝나는 시간이 시작 시간보다 빨라요! ({activity})")
+                error_messages.append(f"{index+1}번째 줄: 종료 시간이 시작 시간보다 빨라요! ({activity})")
                 continue
 
         except ValueError:
-            error_messages.append(f"{index+1}번째 줄: 시간 형식이 잘못되었습니다. '14:00'처럼 써주세요. ({activity})")
+            error_messages.append(f"{index+1}번째 줄: 시간 형식 오류 (예: 14:00)")
             continue
 
-        # 4. 요일 분리 및 데이터 생성
         days = days_str.split(',')
         for day in days:
             day = day.strip()
@@ -113,24 +108,20 @@ def validate_and_process_data(df):
                     '글자색': TEXT_COLOR_MAP.get(text_color_name, 'white'),
                     '시간텍스트': f"{start_str}~{end_str}"
                 })
-            else:
-                # 요일 오타는 경고만 하고 넘어감 (그래프엔 표시 안 됨)
-                pass
                 
     return pd.DataFrame(expanded_data), error_messages
 
 # ---------------------------------------------------------
-# 3. 그래프 그리기
+# 3. 그래프 그리기 함수
 # ---------------------------------------------------------
 def draw_timetable(name1, icon1, df1, name2, icon2, df2, style_opts):
     fig, ax = plt.subplots(figsize=(14, 10))
     days_labels = ['월', '화', '수', '목', '금']
     y_min, y_max = 8, 22
     
-    # 스타일
     font_weight = style_opts['font_weight']
     
-    # 배경
+    # 배경 설정
     ax.grid(axis='y', linestyle='--', alpha=0.3, zorder=0)
     for x in range(len(days_labels) - 1):
         ax.axvline(x + 0.5, color='gray', linestyle='-', linewidth=1, alpha=0.3)
@@ -146,14 +137,11 @@ def draw_timetable(name1, icon1, df1, name2, icon2, df2, style_opts):
         
         for i, bar in enumerate(bars):
             row = df.iloc[i]
-            # 글자색 적용
             txt_color = row['글자색']
-            
-            # 활동명
             ax.text(bar.get_x() + bar.get_width()/2, bar.get_y() + bar.get_height()/2 + 0.1, 
                     str(row['활동명']), ha='center', va='center', color=txt_color, 
                     weight=font_weight, fontsize=style_opts['bar_text_size'])
-            # 시간
+            
             if row['소요시간'] >= 0.5:
                 ax.text(bar.get_x() + bar.get_width()/2, bar.get_y() + bar.get_height()/2 - 0.2, 
                         row['시간텍스트'], ha='center', va='center', color=txt_color, 
@@ -166,7 +154,6 @@ def draw_timetable(name1, icon1, df1, name2, icon2, df2, style_opts):
     ax.set_xticks(range(5))
     ax.set_xticklabels(days_labels, fontsize=style_opts['axis_size'], weight=font_weight)
     
-    # 범례
     legend_text = f"◀ {icon1} {name1} (왼쪽)   |   {icon2} {name2} (오른쪽) ▶"
     ax.text(0, y_min - 0.6, legend_text, fontsize=style_opts['axis_size'], weight='bold', 
             color='#333333', ha='left',
@@ -181,7 +168,7 @@ def draw_timetable(name1, icon1, df1, name2, icon2, df2, style_opts):
     return fig
 
 # ---------------------------------------------------------
-# 4. 초기 데이터 (색상 이름으로 저장)
+# 4. 초기 데이터 및 화면 구성
 # ---------------------------------------------------------
 if 'data_1' not in st.session_state:
     st.session_state.data_1 = pd.DataFrame([
@@ -195,10 +182,7 @@ if 'data_2' not in st.session_state:
         {'활동명': '태권도', '요일': '화,목', '시작시간': '15:00', '종료시간': '16:00', '배경색': '연보라', '글자색': '흰색'},
     ])
 
-# ---------------------------------------------------------
-# 5. UI 구성
-# ---------------------------------------------------------
-st.title("🎨 우리 아이 시간표 만들기 (오류 체크 & 색상 선택)")
+st.title("🎨 우리 아이 시간표 (오류체크 + 저장기능)")
 
 # 사이드바 설정
 with st.sidebar:
@@ -219,10 +203,20 @@ style_opts = {
 }
 
 # --- 메인 입력 탭 ---
-tab1, tab2 = st.tabs([f"{icon1} {name1} 일정", f"{icon2} {name2} 일정"])
+tab1, tab2 = st.tabs([f"{icon1} {name1} 일정 관리", f"{icon2} {name2} 일정 관리"])
 
-def render_editor(key_suffix, data_key):
-    # [핵심] 색상을 드롭다운으로 선택할 수 있도록 설정
+def render_manager(key_suffix, data_key, child_name):
+    # 1. 파일 불러오기
+    uploaded_file = st.file_uploader(f"📂 {child_name} 데이터 불러오기 (CSV)", type=['csv'], key=f"load_{key_suffix}")
+    if uploaded_file is not None:
+        try:
+            df = pd.read_csv(uploaded_file)
+            st.session_state[data_key] = df
+            st.success("데이터를 성공적으로 불러왔습니다!")
+        except:
+            st.error("파일 형식이 올바르지 않습니다.")
+
+    # 2. 데이터 에디터 (색상 선택 기능 포함)
     edited_df = st.data_editor(
         st.session_state[data_key],
         column_config={
@@ -237,60 +231,66 @@ def render_editor(key_suffix, data_key):
         use_container_width=True,
         key=f"editor_{key_suffix}"
     )
+    
+    # 3. 파일 저장하기 버튼
+    csv_data = convert_df_to_csv(edited_df)
+    st.download_button(
+        label=f"💾 {child_name} 데이터 저장하기 (CSV)",
+        data=csv_data,
+        file_name=f"{child_name}_timetable_data.csv",
+        mime='text/csv',
+        key=f"save_{key_suffix}"
+    )
+    
     return edited_df
 
 with tab1:
-    st.info("💡 팁: '배경색' 열을 클릭하면 예쁜 색상 목록이 나옵니다.")
-    df1_input = render_editor("child1", "data_1")
+    df1_input = render_manager("child1", "data_1", name1)
 
 with tab2:
-    st.info("💡 팁: '배경색' 열을 클릭하면 예쁜 색상 목록이 나옵니다.")
-    df2_input = render_editor("child2", "data_2")
+    df2_input = render_manager("child2", "data_2", name2)
 
 # --- 실행 버튼 및 결과 ---
 st.divider()
 
 if st.button("🔄 시간표 업데이트 및 오류 확인", type="primary", use_container_width=True):
-    # 1. 로딩 표시 (새로고침 느낌)
-    with st.spinner('시간표를 꼼꼼하게 확인하고 있어요...'):
-        time.sleep(0.8) # 로딩 효과를 위해 살짝 멈춤
+    with st.spinner('시간표를 생성하고 있어요...'):
+        time.sleep(0.5) 
         
-        # 2. 데이터 세션 저장
+        # 세션 업데이트
         st.session_state.data_1 = df1_input
         st.session_state.data_2 = df2_input
         
-        # 3. 데이터 검사 및 변환
+        # 데이터 검사
         df1_final, err1 = validate_and_process_data(df1_input)
         df2_final, err2 = validate_and_process_data(df2_input)
         
-        # 4. 오류 메시지 출력
         if err1 or err2:
-            st.error("앗! 입력값에 문제가 있어요. 아래 내용을 확인해주세요.")
-            col_err1, col_err2 = st.columns(2)
-            with col_err1:
-                if err1:
-                    st.warning(f"**[{name1}] 오류 목록**")
+            st.error("입력값에 오류가 있습니다.")
+            c1, c2 = st.columns(2)
+            with c1:
+                if err1: 
+                    st.warning(f"{name1} 오류:")
                     for e in err1: st.write(f"- {e}")
-            with col_err2:
-                if err2:
-                    st.warning(f"**[{name2}] 오류 목록**")
+            with c2:
+                if err2: 
+                    st.warning(f"{name2} 오류:")
                     for e in err2: st.write(f"- {e}")
         else:
-            st.success("✅ 모든 데이터가 정상입니다! 시간표를 생성했습니다.")
+            st.success("✅ 오류 없이 완벽합니다!")
 
-        # 5. 그래프 그리기 (오류가 있어도 가능한 부분은 그리기)
+        # 그래프 그리기
         try:
             fig = draw_timetable(name1, icon1, df1_final, name2, icon2, df2_final, style_opts)
             st.pyplot(fig)
             
-            # 다운로드 버튼
             buf = BytesIO()
             fig.savefig(buf, format="png", bbox_inches='tight', dpi=300)
             st.download_button(
-                label="🖼️ 완성된 이미지 다운로드",
+                label="🖼️ 시간표 이미지 다운로드",
                 data=buf.getvalue(),
                 file_name="timetable_final.png",
                 mime="image/png"
             )
         except Exception as e:
-            st.error(f"그래프 생성 중 알 수 없는 오류가 발생했습니다: {e}")
+            st.error(f"오류 발생: {e}")
